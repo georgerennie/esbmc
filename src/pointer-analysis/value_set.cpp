@@ -215,7 +215,7 @@ void value_sett::get_value_set_rec(
   object_mapt &dest,
   const std::string &suffix,
   const type2tc &original_type,
-  bool under_deref) const
+  bool ) const
 {
   if(is_unknown2t(expr) || is_invalid2t(expr))
   {
@@ -335,28 +335,7 @@ void value_sett::get_value_set_rec(
 
   if(is_constant_expr(expr))
   {
-    if(under_deref)
-    {
-      if(is_constant_int2t(expr))
-      {
-        constant_int2t ci = to_constant_int2t(expr);
-        if(ci.value.is_zero())
-        {
-          expr2tc tmp = null_object2tc(expr->type);
-          insert(dest, tmp, BigInt(0));
-          return;
-        }
-        else if(is_signedbv_type(expr->type) || is_unsignedbv_type(expr->type))
-          insert(dest, invalid2tc(original_type), BigInt(0));
-        else
-          insert(dest, unknown2tc(original_type), BigInt(0));
-      }
-    }
-    else
-    {
-      // Constant numbers aren't pointers. Null check is in the value set code
-      // for symbols.
-    }
+
     return;
   }
 
@@ -556,6 +535,9 @@ void value_sett::get_value_set_rec(
 
     // find the pointer operand
     // XXXjmorse - polymorphism.
+
+    if(is_pointer_type(expr))
+    {
     const expr2tc &op0 =
       (is_add2t(expr)) ? to_add2t(expr).side_1 : to_sub2t(expr).side_1;
     const expr2tc &op1 =
@@ -566,34 +548,20 @@ void value_sett::get_value_set_rec(
        !(is_pointer_type(op0) && is_pointer_type(op1))) &&
       "Cannot have pointer arithmetic with two pointers as operands");
 
-    // Find out what the pointer operand points at, and suck that data into
-    // new object maps.
-    object_mapt op0_set;
-    if(!is_pointer_type(op1))
-      get_value_set_rec(op0, op0_set, "", op0->type, false);
+    const expr2tc &ptr_op = (is_pointer_type(op0)) ? op0 : op1;
+    const expr2tc &non_ptr_op = (is_pointer_type(op0)) ? op1 : op0;
 
-    object_mapt op1_set;
-    if(!is_pointer_type(op0))
-      get_value_set_rec(op1, op1_set, "", op1->type, false);
+    object_mapt pointer_expr_set;
+    get_value_set_rec(ptr_op, pointer_expr_set, "", ptr_op->type);
 
     /* TODO: The case that both, op0_set and op1_set, are non-empty is not
      *       handled, yet. */
 
-    if(op0_set.empty() != op1_set.empty())
-    {
-      bool op0_is_ptr = !op0_set.empty();
-
-      const expr2tc &ptr_op = op0_is_ptr ? op0 : op1;
-      const expr2tc &non_ptr_op = op0_is_ptr ? op1 : op0;
-      const object_mapt &pointer_expr_set = op0_is_ptr ? op0_set : op1_set;
-
-      type2tc subtype;
-      if(is_pointer_type(ptr_op))
-        subtype = to_pointer_type(ptr_op->type).subtype;
 
       // Calculate the offset caused by this addition, in _bytes_. Involves
       // pointer arithmetic. We also use the _perceived_ type of what we're
       // adding or subtracting from/to, it might be being typecasted.
+    const type2tc &subtype = to_pointer_type(ptr_op->type).subtype;
       BigInt total_offs(0);
       bool is_const = false;
       try
@@ -606,16 +574,12 @@ void value_sett::get_value_set_rec(
           }
           else
           {
-            BigInt elem_size = 1;
-            if(!is_nil_type(subtype))
-            {
-              if(is_empty_type(subtype))
-                throw new type2t::symbolic_type_excp();
+            if(is_empty_type(subtype))
+              throw new type2t::symbolic_type_excp();
 
-              // Potentially rename,
-              const type2tc renamed = ns.follow(subtype);
-              elem_size = type_byte_size(renamed);
-            }
+            // Potentially rename,
+            const type2tc renamed = ns.follow(subtype);
+            BigInt elem_size = type_byte_size(renamed);
             const BigInt &val = to_constant_int2t(non_ptr_op).value;
             total_offs = val * elem_size;
             if(is_sub2t(expr))
